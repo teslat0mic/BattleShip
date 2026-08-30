@@ -88,5 +88,17 @@ elements whose state is cosmetic and excluded from the gated columns already.
 3. **Convert the five interface processes to function processes.** Smallest surface, changes game
    code, and would need care where those threads use multi-tick sleeps.
 
-Option 1 matches how rollback implementations normally treat presentation state and is the current
-plan.
+**Option 1 was tried and does not work.** Skipping the interface links during re-simulation changed
+the `rng` column at tick 91, and skipping only the fiber-backed processes changed it in the same
+place: the interface objects draw from the *same* random number generator as the simulation, so
+omitting them shifts the RNG stream and therefore the gameplay. Presentation state can be left
+un-replayed; presentation *code* cannot, as long as it shares the RNG.
+
+That leaves options 2 and 3, and 3 now looks the more honest fix: five processes in `if/ifcommon.c`
+(`ifCommonAnnounceThread`, `ifCommonCountdownThread`, `ifCommonEntryFocusThread`,
+`ifCommonEntryAllThread`, `ifCommonSuddenDeathThread`) are the only fiber users a VS battle
+touches. Converting them to function processes with explicit state machines makes the whole battle
+replayable by memcpy, at the cost of rewriting five routines that currently use multi-tick sleeps.
+Option 2 (pool fibers per GObjThread and never destroy them) is cheaper but only papers over the
+lifecycle: it still cannot rewind a fiber's position, so it is correct only if no thread process
+ever yields mid-tick, which has not been established.
