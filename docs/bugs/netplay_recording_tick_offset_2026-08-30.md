@@ -85,3 +85,31 @@ after the start-barrier check, so the first published input is the first simulat
 tracer's `published == tick + 1` invariant holds in netplay as it already does offline. That
 invariant should then be promoted from a warning to a hard failure under `SSB64_RIG_EXIT`, since
 nothing else catches this class of bug.
+
+## Update, later the same day: the first fix attempt was wrong
+
+Publishing and recording were moved behind the start-barrier and readiness checks, on the theory
+that the leading uncounted publish was the whole story. That change is worth keeping on its own
+merits - a held VI used to re-publish the same tick, and `button_tap` is derived as an edge against
+the last published frame, so the second publish of an identical frame produced no edges and could
+swallow a press. But it did **not** fix the offset: a recorded netplay match still needed the +1
+shift to reproduce.
+
+A second attempt - skipping the trace row emitted before any input has been published - silenced
+the tracer's warning but made a recorded match diverge from its own replay at **tick 0 on every
+column, including `stage`**. No one-tick shift can do that, so the model behind it was wrong. It
+was reverted.
+
+What is actually established:
+
+- Offline replay logs no drift warning at all: `published == tick + 1` holds from its first row.
+- Every netplay run logs `trace tick 0 but netinput published 0 ticks`.
+- The netplay battle update and the input read therefore disagree by one at the start, and
+  `syNetPeerCheckBattleExecutionReady` / `syNetPeerCheckStartBarrierReleased` cannot explain it -
+  they are literally the same function, so this is about the order the scene's tasks run in, not
+  about the gates.
+
+The next step is to measure that ordering directly rather than infer it: log the frame in which
+each of `syNetInputFuncRead` and `scVSBattleFuncUpdate` first runs, in both modes, and compare.
+Until then the +1 shift on ingest stays the workaround, and it is exact - a shifted recording
+reproduces its live match on every gated column.
