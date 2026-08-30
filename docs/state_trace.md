@@ -13,7 +13,7 @@ Once per simulated tick, right after `ifCommonBattleUpdateInterfaceAll()` in
 `syNetSyncRecordTick()` computes twelve FNV-1a 32-bit hashes and writes one text line:
 
 ```
-# ssb64h v1 tick full rng battle fighters items weapons stage objman input joints camera vars
+# ssb64h v2 tick full rng battle fighters items weapons stage objman input joints camera vars
 0 809832C5 53589704 D5403D9E D8CDFA18 9DDCA10B 050C5D1F 41B3C8F1 44A42265 06481D31 3D1D6252 8746A390 CEEABA37
 ```
 
@@ -50,6 +50,8 @@ map vertex data, effects.
 SSB64_SYNC_TRACE=<path.ssb64h>     write the trace for the next VS match
 SSB64_SYNC_VERIFY=<path.ssb64h>    load a trace and compare every tick as the match runs
 SSB64_SYNC_DUMP_TICK=<n>           log per-fighter group hashes and hit records at ticks n..n+2
+                                   and, for every live item, its identity, position/velocity bit
+                                   patterns, timers, the whole ITAttackColl and every attack record
 ```
 
 Rig knobs (port layer, `port/gameloop.cpp` / `port/port.cpp`):
@@ -90,6 +92,10 @@ With `SSB64_RIG_EXIT=1` the replay verdict becomes the exit code: 0 PASS, 1 inpu
 2 INCOMPLETE, 3 LOADFAIL (replay or verify trace could not be loaded), **4 DESYNC** (inputs
 replayed identically but a gated state column diverged, or the verify trace was shorter than the
 run). A diverged trace wins over INCOMPLETE.
+
+The header's `v<N>` is the hasher version: bump it whenever the hasher changes what it hashes, and
+regenerate reference traces — traces from two versions are not comparable (the rig's `tracediff.py`
+refuses to compare them).
 
 Offline: `tools/tracediff.py a.ssb64h b.ssb64h` (in the BattleShip-dev rig) reports the first
 divergent tick per column and exits 1 on any gated difference.
