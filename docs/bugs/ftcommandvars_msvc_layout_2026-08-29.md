@@ -54,6 +54,31 @@ only for the N64 build. A `_Static_assert(sizeof(union FTCommandVars) == 16)` al
 Windows match Linux's *wrong* answer; add it after the accessor fix so the layout cannot drift
 again.
 
+## Verification (2026-08-29, after the fix)
+
+Reachability was measured, not assumed. A temporary probe on the motion-script `SetFlag1`/
+`SetFlag2` events across a 289-replay corpus recorded 26,703 flag writes, but almost all carry
+small boolean-ish values. Exactly one packed word reached a throw status:
+
+```
+set2 fkind=9 (Pikachu) player=0 status=104 (LightThrowDrop) motion=90 value=0x0101EFB0
+```
+
+For that word the three hosts disagree: the N64 bit positions give `vel = 0x1EF (495)` and
+`angle = sign-extend12(0xFB0) = -80`; clang's LSB-first bitfield view gives the same `vel` but
+`angle = 0x0101EFB0 >> 20 = 16`; MSVC's 20-byte union reads `vel`/`angle` from bytes 16-19, i.e.
+outside the words the script wrote. The replay that produces this event is `d_castle_s2` in the
+generated corpus - the same file whose entire simulation diverged between MSVC and clang from
+tick 6535 (every gated column) before the fix and matches exactly after it. So the bug is real,
+reachable in ordinary CPU play, and the fix is what closes that divergence.
+
+A 60-second human recording of deliberate item throwing (`corpus/human/item_throws_1.ssb64r`,
+Saffron, 3 CPUs, 57.8% of frames with controller input) never triggers the path: a probe inside
+`ftCommonItemThrowProcUpdate` logged zero events with `flag1`/`flag2` set, and traces with and
+without the fix are identical for that file. Ordinary player item throws take their damage and
+velocity from item attributes; only certain scripted throw motions pack them into `motion_vars`.
+That is why the 18-replay sweep never saw this and why the 270-replay corpus did.
+
 ## Verification plan
 
 A corpus replay in which a human slot smash-throws items (scripted `flag1/flag2`). Compare the
