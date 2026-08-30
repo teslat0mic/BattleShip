@@ -1,7 +1,7 @@
 # `FTItemThrowFlags` reads the wrong bits on every host compiler (`union FTCommandVars`: 20 bytes on MSVC, 16 on clang, 16 on the N64)
 
 **Date:** 2026-08-29
-**Status:** OPEN (decomp `port-patches`, `src/ft/fttypes.h` / `ft/ftcommon/ftcommonitemthrow.c`) — found by review while building the state trace; not fixed in that PR
+**Status:** FIXED on PC (decomp `port-patches`, `ft/ftcommon/ftcommonitemthrow.c`, `#ifdef PORT` accessors reading the N64 bit positions from the `flags` words; the bitfield struct is kept for the N64 build) — found by review while building the state trace; confirmed by the state trace on a 270-replay corpus (`d_castle_s2`: full simulation divergence at tick 6535 when a CPU Link threw a bomb; gone after the fix). Not yet compared against the ROM
 **Class:** compiler-dependent bitfield layout in a union that is written through one view and read through another → scripted item throws use the wrong damage/velocity/angle on both PC hosts (differently)
 
 ## Symptom
