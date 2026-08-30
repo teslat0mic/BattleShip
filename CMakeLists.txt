@@ -678,6 +678,14 @@ if (NOT MSVC)
         decomp/src/libultra/gu/cosf.c
         PROPERTIES COMPILE_OPTIONS "-ffp-contract=off;-fno-strict-aliasing")
     target_compile_options(ssb64_game PRIVATE -fno-builtin-sinf -fno-builtin-cosf)
+else()
+    # MSVC ignores #pragma weak, so the bare sinf()/cosf() call sites in the
+    # decomp resolved to the UCRT and diverged from every other host (caught
+    # by the gameplay-state trace). Force-include a header that maps the bare
+    # names to the libultra __sinf/__cosf in every C TU of the game library —
+    # the same routing the weak alias gives GCC/Clang. See port/msvc_trig.h.
+    target_compile_options(ssb64_game PRIVATE
+        "$<$<COMPILE_LANGUAGE:C>:/FI${CMAKE_SOURCE_DIR}/port/msvc_trig.h>")
 endif()
 
 # N64 audio library — synthesis driver, sequence player, voice management.
