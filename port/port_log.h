@@ -13,8 +13,13 @@
 extern "C" {
 #endif
 
-/* Open the log file. Call once, before anything else. */
-void port_log_init(const char *path);
+/* Open the log file. Call once, before anything else. Returns 0 on success,
+ * -1 if the file could not be opened (logging stays disabled; the caller may
+ * retry with another path). */
+int port_log_init(const char *path);
+
+/* Line-buffer the log (rig runs: small logs that must survive a kill). */
+void port_log_set_line_buffered(void);
 
 /* Close the log file. Call at shutdown. */
 void port_log_close(void);

@@ -11,11 +11,20 @@
 #endif
 
 static FILE *sLogFile = NULL;
+static int sLogFlushEachLine = 0; /* rig mode: survive a kill */
 
-void port_log_init(const char *path)
+int port_log_init(const char *path)
 {
-	if (sLogFile != NULL) return;
+	if (sLogFile != NULL) return 0;
 	sLogFile = fopen(path, "w");
+	return (sLogFile != NULL) ? 0 : -1;
+}
+
+void port_log_set_line_buffered(void)
+{
+	/* Not setvbuf(_IOLBF): MSVC treats it as full buffering and rejects a
+	 * zero size with a fail-fast. Flush per call instead; rig logs are small. */
+	sLogFlushEachLine = 1;
 }
 
 void port_log_close(void)
@@ -39,6 +48,7 @@ void port_log(const char *fmt, ...)
 	va_start(ap, fmt);
 	vfprintf(sLogFile, fmt, ap);
 	va_end(ap);
+	if (sLogFlushEachLine) fflush(sLogFile);
 	/* fflush on every call costs seconds per frame on a slow drive when
 	 * figatree watchdogs fire 28x per frame during a stuck APPEAR. Rely on
 	 * stdio's buffer + OS-on-exit flush for normal logging; crash dumps

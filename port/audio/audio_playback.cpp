@@ -14,6 +14,7 @@
 
 #include "audio_playback.h"
 #include "port_log.h"
+#include "gameloop.h"
 
 #include <libultraship/bridge/audiobridge.h>
 
@@ -71,6 +72,9 @@ extern "C" void portAudioPushSilence(void)
         byteLen = sizeof(sSilenceBuf);
     }
 
+    if (port_rig_fast_enabled()) {
+        return; /* fast-forward: nothing consumes the queue at 60 Hz; do not grow it */
+    }
     AudioPlayerPlayFrame(reinterpret_cast<const uint8_t*>(sSilenceBuf), byteLen);
 }
 
@@ -240,5 +244,8 @@ extern "C" void portAudioSubmitFrame(const void *buf, int sampleCount)
 
     wavAppend(pcm, byteLen);
 
+    if (port_rig_fast_enabled()) {
+        return; /* fast-forward: synthesis still ran (game-visible); output is dropped */
+    }
     AudioPlayerPlayFrame(reinterpret_cast<const uint8_t*>(pcm), byteLen);
 }

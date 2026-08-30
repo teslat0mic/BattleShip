@@ -52,6 +52,35 @@ SSB64_SYNC_VERIFY=<path.ssb64h>    load a trace and compare every tick as the ma
 SSB64_SYNC_DUMP_TICK=<n>           log per-fighter group hashes and hit records at ticks n..n+2
 ```
 
+Rig knobs (port layer, `port/gameloop.cpp` / `port/port.cpp`):
+
+```
+SSB64_RIG_FAST=1        headless fast-forward: display lists are dropped before Fast3D, the
+                        idle-present/sleep fallback is skipped, audio is synthesized but not
+                        queued. Nothing paces the loop, so a replay runs at CPU speed
+                        (1800 ticks ≈ 1.7 s incl. boot on this box, was 31 s).
+SSB64_RIG_HEADLESS=1    hide the game window (every SDL window of the process, or this thread's
+                        Win32 windows on the DXGI backend); cosmetic; only exercised together
+                        with SSB64_RIG_FAST=1
+SSB64_LOG_PATH=<file>   write the log there instead of <pref dir>/ssb64.log (line-buffered;
+                        an unopenable path falls back to the default and says so on stderr)
+```
+
+Why fast mode is safe, and its scope: the only 60 Hz pacing is the backend frame limiter inside
+`DrawAndRunGraphicsCommands` / `PresentCurrentFramebuffer` (`SwapBuffersBegin` →
+`SyncFramerateWithTime`) plus the idle-present fallback in `PortPushFrame`; fast mode never
+reaches either. The VI/SP/DP message cadence the game sees is unchanged — one simulated vblank per
+`PortPushFrame`, gfx completions one VI later with deferral N=1 (`port_get_last_dl_defer_n()`
+short-circuits in fast mode; no DL is walked, so there is no cost to model). Gameplay never reads
+wall-clock time (`osGetCount` deltas feed debug counters only). **Scope:** "identical to real
+time" holds outside the RCP-freeze allowlist (`port_scene_wants_freeze_simulation`:
+Opening/Ending/AutoDemo scenes). There real time uses N=2..3 for heavy display lists, which delays
+game ticks against `sSYSchedulerTicCount` (it feeds `time_passed`); fast mode does not reproduce
+those authored freezes and logs once if it finds itself in such a scene. VS battle — where every
+replay boots — is not in the allowlist. Fast mode also never walks a display list, so a fast PASS
+says nothing about a real-time crash in the DL walk. **Parallel instances need
+`SSB64_RIG_EXIT=1`:** the clean-exit path saves the shared config file from every instance.
+
 Log lines (`SSB64 SyncTrace:`): `sizeof ...` layout probe at startup, `trace start/wrote`,
 `verify start`, `FIRST DIVERGENCE tick=N column=<name> expected=… actual=…` once per column
 (with `(not gated)` where applicable), and the summary
@@ -94,6 +123,13 @@ divergent tick per column and exits 1 on any gated difference.
 - What the trace cannot see: two hosts that are *consistently* wrong in the same way (or in
   ways a given replay never exercises) still match. The trace proves "same as the other build",
   not "same as the N64"; the bug above was found by reading, and its verification needs the ROM.
+- **Fast mode (`SSB64_RIG_FAST=1`) vs real time: identical on all 12 columns** on all 26 corpus
+  replays (8-file battery incl. the 4646-tick early-end file + 18-file all-stage sweep, ~50k
+  ticks) on both MSVC and clang — against the real-time traces of the previous build and against
+  real-time runs of the same binary. All battery verdicts (PASS/FAIL/INCOMPLETE/LOADFAIL) are
+  unchanged. Eight instances run in parallel (`SSB64_RIG_HEADLESS=1`, per-process
+  `SSB64_LOG_PATH`, `SSB64_RIG_EXIT=1`) produce the same traces as sequential runs. Whole 26-file
+  sweep at 8-way parallel: 22 s on MSVC, 37 s on clang (was ~14 min per side).
 - A hashed field written from a draw proc (`is_magnify_show`, `ftDisplayMainProcDisplay()`)
   produced isolated single-tick `fighters` divergences between hosts when the renderer dropped
   a draw pass (`syTaskmanRunTask` skips `task_draw` when no gfx context is free). Rule: fields

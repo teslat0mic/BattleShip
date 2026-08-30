@@ -1222,13 +1222,30 @@ int main(int argc, char* argv[]) {
 	 * Ship::Context will later use for the user's saves and o2r. */
 	{
 		std::string logPath;
-		if (char* p = SDL_GetPrefPath(NULL, "BattleShip")) {
-			logPath = std::string(p) + "ssb64.log";
-			SDL_free(p);
-		} else {
-			logPath = "ssb64.log";  // last-resort cwd fallback
+		bool rigLog = false;
+		if (const char* envPath = std::getenv("SSB64_LOG_PATH"); envPath != nullptr && envPath[0] != '\0') {
+			/* Rig override: parallel headless runs each need their own log. A
+			 * path that cannot be opened must not turn into a silent no-log
+			 * run — say so on stderr and fall back to the default location. */
+			if (port_log_init(envPath) == 0) {
+				rigLog = true;
+			} else {
+				fprintf(stderr, "SSB64: SSB64_LOG_PATH=%s could not be opened; using the default log path\n", envPath);
+			}
 		}
-		port_log_init(logPath.c_str());
+		if (!rigLog) {
+			if (char* p = SDL_GetPrefPath(NULL, "BattleShip")) {
+				logPath = std::string(p) + "ssb64.log";
+				SDL_free(p);
+			} else {
+				logPath = "ssb64.log";  // last-resort cwd fallback
+			}
+			port_log_init(logPath.c_str());
+		} else {
+			/* Rig logs are small; line-buffer so a run killed on timeout still
+			 * leaves its lines behind. */
+			port_log_set_line_buffered();
+		}
 	}
 
 #ifdef __APPLE__
@@ -1358,6 +1375,38 @@ int main(int argc, char* argv[]) {
 	// SSB64_MAX_FRAMES=N — debug aid that forces a clean shutdown
 	// after N frames. Goes through the same code path as the user
 	// closing the window (Window::Close() sets mIsRunning=false).
+	/* SSB64_RIG_HEADLESS=1: hide the game window (rig runs in parallel on
+	 * one desktop; nothing to look at with SSB64_RIG_FAST). Backends own
+	 * their window: SDL2 (GL on Linux, Metal on macOS) — hide every SDL
+	 * window this process created (ids are small integers from 1); DXGI on
+	 * Windows creates a raw Win32 HWND on this thread — hide this thread's
+	 * top-level windows (process-local, unlike FindWindow by class).
+	 * Only exercised together with SSB64_RIG_FAST=1; rendering into a hidden
+	 * window in non-fast mode is untested. Parallel instances: use
+	 * SSB64_RIG_EXIT=1 — the clean-exit path saves the shared config file
+	 * from every instance (torn JSON). */
+	if (const char* hl = std::getenv("SSB64_RIG_HEADLESS"); hl != nullptr && std::atoi(hl) != 0) {
+		int hidden = 0;
+		for (Uint32 id = 1; id <= 16; id++) {
+			if (SDL_Window* w = SDL_GetWindowFromID(id)) {
+				SDL_HideWindow(w);
+				hidden++;
+			}
+		}
+#ifdef _WIN32
+		if (hidden == 0) {
+			EnumThreadWindows(GetCurrentThreadId(), [](HWND h, LPARAM param) -> BOOL {
+				ShowWindow(h, SW_HIDE);
+				if (!IsWindowVisible(h)) {
+					(*reinterpret_cast<int*>(param))++;
+				}
+				return TRUE;
+			}, reinterpret_cast<LPARAM>(&hidden));
+		}
+#endif
+		port_log("SSB64 Rig: SSB64_RIG_HEADLESS=1 — %d window(s) hidden%s\n", hidden, hidden ? "" : " (none found; left visible)");
+	}
+
 	int maxFrames = 0;
 	if (const char* env = std::getenv("SSB64_MAX_FRAMES")) {
 		maxFrames = std::atoi(env);

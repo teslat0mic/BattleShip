@@ -39,6 +39,13 @@ void PortGameShutdown(void);
  */
 void port_resume_service_threads(void);
 
+/**
+ * SSB64_RIG_FAST=1: headless fast-forward for the replay rig — display
+ * lists are dropped before Fast3D, no frame pacing, audio not queued.
+ * Lazy env read; returns 0/1. Defined in gameloop.cpp.
+ */
+int port_rig_fast_enabled(void);
+
 #ifdef __cplusplus
 }
 #endif

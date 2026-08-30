@@ -282,6 +282,19 @@ extern "C" int port_get_last_dl_defer_n(void)
 	 * game-tick rate). Issue #78. */
 	extern unsigned char port_diag_get_scene_curr(void);
 	extern int port_scene_wants_freeze_simulation(unsigned char scene_id);
+	if (port_rig_fast_enabled()) {
+		/* Fast-forward never walks a DL, so there is no cost to model: N=1
+		 * always. Authored RCP freezes (the allowlist below) are therefore
+		 * NOT reproduced in fast mode; logged once so a fast trace from such
+		 * a scene is never mistaken for a real-time one. */
+		static int sFastFreezeWarned = 0;
+		if (!sFastFreezeWarned && port_scene_wants_freeze_simulation(port_diag_get_scene_curr())) {
+			sFastFreezeWarned = 1;
+			port_log("SSB64 Rig: SSB64_RIG_FAST=1 in an RCP-freeze scene (scene=%d): deferral forced to N=1, tick timing differs from real time here\n",
+			         (int)port_diag_get_scene_curr());
+		}
+		return 1;
+	}
 	if (!port_scene_wants_freeze_simulation(port_diag_get_scene_curr())) {
 		return 1;
 	}
@@ -471,6 +484,14 @@ extern "C" void port_drain_pending_display_list(void)
 		return;
 	}
 
+	if (port_rig_fast_enabled()) {
+		/* Fast-forward: the DL is never handed to Fast3D — no window lookup,
+		 * no walk, no cost latch (port_get_last_dl_defer_n() returns 1 in
+		 * fast mode). The idle-present path is gated off separately. */
+		sPendingDisplayList = nullptr;
+		return;
+	}
+
 	auto context = Ship::Context::GetInstance();
 	if (!context) {
 		port_log("SSB64: WARNING — no Ship::Context in DL drain\n");
@@ -520,9 +541,10 @@ extern "C" void port_drain_pending_display_list(void)
 		}
 		if (!costLatched) {
 			costLatched = true;
-			/* Capture this DL's cost so port_get_last_dl_defer_n() can use it
-			 * to set N for THIS task's SP/DP-interrupt deferral. osSpTaskStartGo
-			 * reads it AFTER port_submit_display_list returns. Latched from the
+			/* Capture this DL's cost for port_get_last_dl_defer_n(). Since the
+			 * walk moved to this drain (after port_resume_service_threads),
+			 * osSpTaskStartGo reads the latch when the NEXT task is submitted,
+			 * i.e. N is computed from the previous frame's DL. Latched from the
 			 * first subframe run only — later runs walk the same DL. */
 			sLastDLTris = sFrameTriCount;
 			sLastDLRectPx = sFrameRectPx;
@@ -537,6 +559,41 @@ extern "C" void port_drain_pending_display_list(void)
 
 	sDLSubmitsThisFrame++;
 	gbi_trace_end_frame();
+}
+
+/* ========================================================================= */
+/*  Rig fast-forward (SSB64_RIG_FAST=1)                                      */
+/*                                                                           */
+/*  Everything that paces the host loop to 60 Hz lives on the render path:   */
+/*  the backend frame limiter inside DrawAndRunGraphicsCommands (SwapBuffers */
+/*  -> SyncFramerateWithTime / waitable timer) and the idle-present fallback */
+/*  in PortPushFrame. In fast mode the staged display list is dropped before */
+/*  it reaches Fast3D and the idle path does nothing, so PortPushFrame runs  */
+/*  as fast as the simulation does. The VI/SP/DP message cadence the game    */
+/*  sees is unchanged: one vblank per PortPushFrame, gfx completions one VI  */
+/*  later with deferral N=1 (port_get_last_dl_defer_n() short-circuits: no   */
+/*  DL is walked, so there is no cost to model).                             */
+/*                                                                           */
+/*  Scope of "identical to real time": scenes outside the RCP-freeze         */
+/*  allowlist (port_scene_wants_freeze_simulation: Opening/Ending/AutoDemo). */
+/*  There real time uses N=2..3 for heavy DLs, which shifts                   */
+/*  sSYSchedulerTicCount relative to game ticks (it feeds time_passed);      */
+/*  fast mode does not reproduce those authored freezes. VS battle, where    */
+/*  the replay rig lives, is not in the allowlist. Also: fast mode never     */
+/*  walks a DL, so a fast PASS says nothing about real-time DL-walk crashes. */
+/* ========================================================================= */
+
+extern "C" int port_rig_fast_enabled(void)
+{
+	static int sFast = -1;
+	if (sFast < 0) {
+		const char *env = std::getenv("SSB64_RIG_FAST");
+		sFast = (env != nullptr && std::atoi(env) != 0) ? 1 : 0;
+		if (sFast) {
+			port_log("SSB64 Rig: SSB64_RIG_FAST=1 — display lists dropped, no frame pacing, audio not queued\n");
+		}
+	}
+	return sFast;
 }
 
 /* ========================================================================= */
@@ -802,7 +859,7 @@ void PortPushFrame(void)
 	 * 0-submit frames can otherwise hold an older swapchain image. Present
 	 * the cached game framebuffer texture through the normal GUI/window path
 	 * without re-running any display list or touching game memory. */
-	if (sDLSubmitsThisFrame == 0) {
+	if (sDLSubmitsThisFrame == 0 && !port_rig_fast_enabled()) {
 		bool idlePresented = false;
 		static int sFreezePacing = -1;
 		if (sFreezePacing < 0) {
